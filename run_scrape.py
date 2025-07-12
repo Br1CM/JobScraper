@@ -2,7 +2,7 @@ import pandas as pd
 from selenium import webdriver
 from config import Config
 from scrapers.linkedin import LinkedInScraper
-
+import time
 
 def main():
     # Load configuration
@@ -16,9 +16,9 @@ def main():
 
         # Perform login
         linkedin_scraper.login()
-
+        time.sleep(5)
         # Fetch job listings
-        listings = linkedin_scraper.fetch_listings()
+        linkedin_scraper.fetch_listings()
 
         # Convert to DataFrame and save
         #df = pd.DataFrame([job.__dict__ for job in listings])

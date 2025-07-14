@@ -17,7 +17,7 @@ import csv
 from .base import BaseJobScraper
 from models import JobListing
 from typing import List
-
+import datetime
 
 class LinkedInScraper(BaseJobScraper):
     
@@ -85,7 +85,7 @@ class LinkedInScraper(BaseJobScraper):
             # 2) title + URL
             try:
                 link = card.find_element(By.CSS_SELECTOR, "a.job-card-container__link")
-                data["title"] = link.text.strip()
+                data["title"] = link.text.strip().split('\n')[0]
                 data["url"]   = link.get_attribute("href")
             except NoSuchElementException:
                 data["title"] = None
@@ -128,37 +128,16 @@ class LinkedInScraper(BaseJobScraper):
             """
             info = {}
 
-            # 1) Title
-            try:
-                info["title"] = detail.find_element(
-                    By.CSS_SELECTOR,
-                    ".job-details-jobs-unified-top-card__job-title h1"
-                ).text.strip()
-            except NoSuchElementException:
-                info["title"] = None
 
-            # 2) Company
-            try:
-                info["company"] = detail.find_element(
-                    By.CSS_SELECTOR,
-                    ".job-details-jobs-unified-top-card__company-name a"
-                ).text.strip()
-            except NoSuchElementException:
-                info["company"] = None
-
-            # 3) Location / date / applicants (all in the tertiary-description-container span sequence)
+            # 3) date
             try:
                 terc = detail.find_element(
                     By.CSS_SELECTOR,
                     ".job-details-jobs-unified-top-card__tertiary-description-container"
                 ).text.split("·")
-                # e.g. ["Italia ", " hace 1 hora ", " 22 solicitudes"]
-                info["location"]    = terc[0].strip()
                 info["date_posted"] = terc[1].strip()
-                # strip “solicitudes” to get number
-                info["applicants"]  = terc[2].strip()
             except (NoSuchElementException, IndexError):
-                info["location"] = info["date_posted"] = info["applicants"] = None
+                info["date_posted"] = None
 
             # 4) Work mode / insight flags (e.g. “En remoto” badges)
             try:
@@ -182,24 +161,19 @@ class LinkedInScraper(BaseJobScraper):
 
             # 6) Recruiter / hiring team info
             try:
-                hirer = detail.find_element(
+                section = detail.find_element(
+                     By.CSS_SELECTOR,
+                     ".job-details-people-who-can-help__section--two-pane"
+                     )
+                link = section.find_elements(
                     By.CSS_SELECTOR,
-                    ".job-details-people-who-can-help__section--two-pane .jobs-poster__name"
-                )
-                info["recruiter_name"]    = hirer.text.strip()
-                info["recruiter_profile"] = hirer.get_attribute("href")
-            except NoSuchElementException:
-                info["recruiter_name"] = info["recruiter_profile"] = None
+                    "a.NnVeUBLeYkojoTFunqrMWBIUoyvJEONsslMc"
+                    )[0]
+                info["recruiter_profile"] = link.get_attribute("href")
+            except:
+                info["recruiter_profile"] = None
 
-            # 7) Company overview (short “About company”)
-            try:
-                info["company_overview"] = detail.find_element(
-                    By.CSS_SELECTOR,
-                    ".jobs-company__company-description"
-                ).text.strip()
-            except NoSuchElementException:
-                info["company_overview"] = None
-
+            info['scraped_datetime'] = datetime.datetime.now().strftime('%Y-%m-%d %H:%M')
             return info
 
 
@@ -208,6 +182,8 @@ class LinkedInScraper(BaseJobScraper):
         last_count = 0
         index      = 0
         jobs_data = []
+        seen_job_ids  = set()
+
         while True:
             # Re-fetch the list of <li> items each iteration
             items = container.find_elements(By.TAG_NAME, "li")
@@ -227,11 +203,18 @@ class LinkedInScraper(BaseJobScraper):
             
             item = items[index]
             try:
+                job_id = item.get_attribute("data-occludable-job-id")
+                print(job_id)
+                if job_id in seen_job_ids or job_id is None:
+                    index += 1
+                    continue
                 # Scroll the specific <li> into view
                 self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", item)
                 time.sleep(0.3)
                 # Click it
                 item.click()
+
+                time.sleep(2)
                 
                 item_data = parse_job_card(item)
                 
@@ -242,7 +225,8 @@ class LinkedInScraper(BaseJobScraper):
                 detail_data = parse_detail_pane(detail)
                 item_data.update(detail_data)
                 jobs_data.append(item_data)
-                
+                seen_job_ids.add(job_id)
+
                 index += 1
             except (StaleElementReferenceException, ElementClickInterceptedException, ElementNotInteractableException):
                 # If the element went stale or isn’t yet interactable, 

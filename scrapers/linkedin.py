@@ -4,6 +4,12 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.action_chains import ActionChains
+from selenium.common.exceptions import (
+    StaleElementReferenceException,
+    ElementClickInterceptedException,
+    ElementNotInteractableException,
+    NoSuchElementException
+)
 from selenium import webdriver
 from config import Config
 import time
@@ -48,79 +54,213 @@ class LinkedInScraper(BaseJobScraper):
             EC.element_to_be_clickable((By.CSS_SELECTOR, 'button[data-litms-control-urn="login-submit"]'))
             )
         login_button.click()
+        time.sleep(5)
 
     def fetch_listings(self) -> List[JobListing]:
-        # navigate, extract, return normalized records
-        self.driver.get("https://www.linkedin.com/jobs/search/?currentJobId=4263258080&distance=25&f_WT=2&geoId=91000007&keywords=data%20scientist")
+        
+        
+        # navigate, extract, return normalized record
+        self.driver.get("https://www.linkedin.com/jobs/search/?distance=25&f_TPR=r86400&f_WT=2&geoId=91000007&keywords=data%20scientist")
 
-        # 3) Scroll to load all job cards
-        def scroll_job_list():
-            job_list = self.wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "ul.AatwRCIdFbntOCtdvHqGWSSyJybXzzBog > li")))
-            last_height = self.driver.execute_script("return arguments[0].scrollHeight", job_list)
-            while True:
-                self.driver.execute_script("arguments[0].scrollTo(0, arguments[0].scrollHeight);", job_list)
-                time.sleep(1)
-                new_height = self.driver.execute_script("return arguments[0].scrollHeight", job_list)
-                if new_height == last_height:
+        ul_css = "ul.AatwRCIdFbntOCtdvHqGWSSyJybXzzBog"
+
+        # Wait for the <ul> container
+        container = self.wait.until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, ul_css))
+            )
+        
+        def parse_job_card(card):
+            """
+            Given a WebElement for the <li> job-card, return a dict of:
+             - job_id
+             - title
+             - url
+             - company
+             - location
+            """
+            data = {}
+            # 1) job id
+            data["job_id"] = card.get_attribute("data-occludable-job-id")
+
+            # 2) title + URL
+            try:
+                link = card.find_element(By.CSS_SELECTOR, "a.job-card-container__link")
+                data["title"] = link.text.strip()
+                data["url"]   = link.get_attribute("href")
+            except NoSuchElementException:
+                data["title"] = None
+                data["url"]   = None
+    
+            # 3) company name
+            try:
+                data["company"] = card.find_element(
+                    By.CSS_SELECTOR,
+                    ".artdeco-entity-lockup__subtitle span"
+                ).text.strip()
+            except NoSuchElementException:
+                data["company"] = None
+
+            # 4) location
+            try:
+                data["location"] = card.find_element(
+                    By.CSS_SELECTOR,
+                    ".job-card-container__metadata-wrapper li span"
+                ).text.strip()
+            except NoSuchElementException:
+                data["location"] = None
+
+            return data
+
+
+
+        def parse_detail_pane(detail):
+            """
+            Given the root WebElement of the job-detail pane, extract:
+            - title
+            - company
+            - location
+            - date_posted
+            - applicants
+            - work_mode
+            - full_description (text)
+            - recruiter_name, recruiter_profile (if present)
+            - company_overview (text)
+            """
+            info = {}
+
+            # 1) Title
+            try:
+                info["title"] = detail.find_element(
+                    By.CSS_SELECTOR,
+                    ".job-details-jobs-unified-top-card__job-title h1"
+                ).text.strip()
+            except NoSuchElementException:
+                info["title"] = None
+
+            # 2) Company
+            try:
+                info["company"] = detail.find_element(
+                    By.CSS_SELECTOR,
+                    ".job-details-jobs-unified-top-card__company-name a"
+                ).text.strip()
+            except NoSuchElementException:
+                info["company"] = None
+
+            # 3) Location / date / applicants (all in the tertiary-description-container span sequence)
+            try:
+                terc = detail.find_element(
+                    By.CSS_SELECTOR,
+                    ".job-details-jobs-unified-top-card__tertiary-description-container"
+                ).text.split("·")
+                # e.g. ["Italia ", " hace 1 hora ", " 22 solicitudes"]
+                info["location"]    = terc[0].strip()
+                info["date_posted"] = terc[1].strip()
+                # strip “solicitudes” to get number
+                info["applicants"]  = terc[2].strip()
+            except (NoSuchElementException, IndexError):
+                info["location"] = info["date_posted"] = info["applicants"] = None
+
+            # 4) Work mode / insight flags (e.g. “En remoto” badges)
+            try:
+                badge = detail.find_element(
+                    By.CSS_SELECTOR,
+                    "li.job-details-jobs-unified-top-card__job-insight--highlight span.ui-label"
+                )
+                info["work_mode"] = badge.text.strip()
+            except NoSuchElementException:
+                info["work_mode"] = None
+
+            # 5) Full job description HTML/text
+            try:
+                desc_el = detail.find_element(
+                    By.CSS_SELECTOR,
+                    ".jobs-description-content__text--stretch"
+                )
+                info["full_description"] = desc_el.text.strip()
+            except NoSuchElementException:
+                info["full_description"] = None
+
+            # 6) Recruiter / hiring team info
+            try:
+                hirer = detail.find_element(
+                    By.CSS_SELECTOR,
+                    ".job-details-people-who-can-help__section--two-pane .jobs-poster__name"
+                )
+                info["recruiter_name"]    = hirer.text.strip()
+                info["recruiter_profile"] = hirer.get_attribute("href")
+            except NoSuchElementException:
+                info["recruiter_name"] = info["recruiter_profile"] = None
+
+            # 7) Company overview (short “About company”)
+            try:
+                info["company_overview"] = detail.find_element(
+                    By.CSS_SELECTOR,
+                    ".jobs-company__company-description"
+                ).text.strip()
+            except NoSuchElementException:
+                info["company_overview"] = None
+
+            return info
+
+
+
+
+        last_count = 0
+        index      = 0
+        jobs_data = []
+        while True:
+            # Re-fetch the list of <li> items each iteration
+            items = container.find_elements(By.TAG_NAME, "li")
+            # If we’ve processed all currently-loaded items…
+            if index >= len(items):
+                # If no new items have loaded since last loop, we’re done
+                if len(items) == last_count:
                     break
-                last_height = new_height
-
-        scroll_job_list()
-
-        job_list = self.wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "ul.AatwRCIdFbntOCtdvHqGWSSyJybXzzBog > li")))
-        rows = []
-        for idx, card in enumerate(job_list, start=1):
-        #    Scroll card into view & click
-            ActionChains(self.driver).move_to_element(card).perform()
-            card.click()
-    
-            # Wait for the detail panel to load
-            detail = self.wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, ".jobs-details__main-content")))
-    
-            # 5) Extract fields
+                # Otherwise, scroll to load more
+                last_count = len(items)
+                self.driver.execute_script(
+                    "arguments[0].scrollTo(0, arguments[0].scrollHeight);", 
+                    container
+                )
+                time.sleep(1)
+                continue
+            
+            item = items[index]
             try:
-                title = detail.find_element(By.CSS_SELECTOR, "h1.jobs-details-top-card__job-title").text.strip()
-            except:
-                title = None
-            try:
-                company = detail.find_element(By.CSS_SELECTOR, "a.jobs-details-top-card__company-url").text.strip()
-            except:
-                company = None
-            try:
-                location = detail.find_element(By.CSS_SELECTOR, ".jobs-details-top-card__bullet").text.strip()
-            except:
-                location = None
-            try:
-                date_posted = detail.find_element(By.CSS_SELECTOR, "span.jobs-details-top-card__job-info span").text.strip()
-            except:
-                date_posted = None
-            # recruiter/contact info may be buried further down
-            try:
-                # expand "see more" if present
-                see_more = detail.find_element(By.CSS_SELECTOR, ".jobs-description__see-more-button")
-                see_more.click()
+                # Scroll the specific <li> into view
+                self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", item)
+                time.sleep(0.3)
+                # Click it
+                item.click()
+                
+                item_data = parse_job_card(item)
+                
+                detail = self.wait.until(
+                     EC.presence_of_element_located((By.CSS_SELECTOR, ".jobs-search__job-details"))
+                     )
+                # 3) scrape the detail
+                detail_data = parse_detail_pane(detail)
+                item_data.update(detail_data)
+                jobs_data.append(item_data)
+                
+                index += 1
+            except (StaleElementReferenceException, ElementClickInterceptedException, ElementNotInteractableException):
+                # If the element went stale or isn’t yet interactable, 
+                # scroll the container a bit more and retry
+                self.driver.execute_script(
+                    "arguments[0].scrollBy(0, 100);", container
+                )
                 time.sleep(0.5)
-            except:
-                pass
-            try:
-                description = detail.find_element(By.CSS_SELECTOR, ".jobs-description-content__text").text.strip()
-            except:
-                description = None
-    
-            rows.append({
-                "Title": title,
-                "Company": company,
-                "Location": location,
-                "Date Posted": date_posted,
-                "Description": description
-            })
-            print(f"[{idx}/{len(job_list)}] Scraped: {title} at {company}")
+                # don’t increment index here—try again
+                continue
+
+
 
         # 6) Write to CSV
         with open("linkedin_data_scientist_jobs.csv", "w", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=rows[0].keys())
+            writer = csv.DictWriter(f, fieldnames=jobs_data[0].keys())
             writer.writeheader()
-            writer.writerows(rows)
+            writer.writerows(jobs_data)
         
         print("Done! Data saved to linkedin_data_scientist_jobs.csv")
 

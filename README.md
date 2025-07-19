@@ -10,8 +10,10 @@ This is a simple, self-hosted web-scraping tool that navigates to the career pag
 
 - **Automated Login**  
   Logs into each site (e.g. LinkedIn) using credentials stored in a `.env` file.  
-- **Dynamic Filtering**  
-  Applies custom filters (keywords, locations, remote/on-site preferences) to only capture the jobs you care about.  
+- **Filtering**  
+  Applies predetermined filters (keywords, locations, remote/on-site preferences) to only capture the jobs that appear based on that search.
+- **Data Extraction**
+  Scrolls through the possible job offers to extract desired information regarding the job offers. Moves to different pages to captura all the job listings for the search
 - **Result Export**  
   Saves filtered job listings (title, company, location, link).  
 

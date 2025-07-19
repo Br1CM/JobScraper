@@ -1,6 +1,6 @@
 # Job Scraper
 
-**A personal project to automate tracking of job postings that match my criteria and build a list of positions to which I want to apply.**
+**A personal project to automate tracking of job postings that match my criteria and build a list of positions to which I could fit in.**
 
 ## Overview
 
@@ -14,10 +14,6 @@ This is a simple, self-hosted web-scraping tool that navigates to the career pag
   Applies custom filters (keywords, locations, remote/on-site preferences) to only capture the jobs you care about.  
 - **Result Export**  
   Saves filtered job listings (title, company, location, link).  
-- **Modular Design**  
-  Easily add or remove sites by editing a small configuration file.
-
-## Getting Started
 
 ### Prerequisites
 
